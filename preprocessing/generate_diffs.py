@@ -1,4 +1,3 @@
-import argparse
 import os
 from functools import partial
 from multiprocessing.pool import Pool
@@ -8,19 +7,14 @@ import numpy as np
 from skimage.metrics import structural_similarity
 from tqdm import tqdm
 
+from preprocessing.option import parse_args
+
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 
 cv2.ocl.setUseOpenCL(False)
 cv2.setNumThreads(0)
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Extract image diffs")
-    parser.add_argument("--root-dir", help="root directory", default="")
-    args = parser.parse_args()
-    return args
 
 
 def get_original_with_fakes(root_dir):

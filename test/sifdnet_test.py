@@ -19,9 +19,9 @@ os.environ["CUDA_VISIBLE_DEVICES"] = CONFIG['CUDA_VISIBLE_DEVICES']
 torch.backends.cudnn.benchmark = True
 
 
-class EmalNetTestCase(unittest.TestCase):
+class SIFDNetTestCase(unittest.TestCase):
 
-    def test_emalnet(self):
+    def test_sifdnet(self):
         self.assertTrue(torch.cuda.is_available())
         model = sifdnet(pretrained=True)
         model = model.cuda()
@@ -63,7 +63,7 @@ class EmalNetTestCase(unittest.TestCase):
         input_size = [(24, 128, 128), (56, 32, 32), (160, 16, 16), (160, 8, 8)]
         summary(model, input_size=input_size)
 
-    def test_count_emalnet_parameters(self):
+    def test_count_sifdnet_parameters(self):
         self.assertTrue(torch.cuda.is_available())
         model = sifdnet(pretrained=True)
         print(count_parameters(model))

@@ -1,4 +1,3 @@
-import argparse
 import json
 import os
 from functools import partial
@@ -6,6 +5,8 @@ from multiprocessing.pool import Pool
 
 import cv2
 from tqdm import tqdm
+
+from preprocessing.option import parse_args
 
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
@@ -73,10 +74,7 @@ def get_video_paths(root_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Extracts crops from video")
-    parser.add_argument("--root-dir", help="root directory")
-    parser.add_argument("--crops-dir", help="crops directory")
-    args = parser.parse_args()
+    args = parse_args()
     os.makedirs(os.path.join(args.root_dir, args.crops_dir), exist_ok=True)
     params = get_video_paths(args.root_dir)
     with Pool(processes=1) as p:

@@ -5,7 +5,7 @@ from .constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, INPUT_SIZE
 
 __all__ = ['Bottleneck', 'ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152']
 
-from .helpers import load_pretrained
+from timm.models.helpers import load_pretrained
 
 
 def _cfg(url='', **kwargs):
@@ -47,10 +47,6 @@ default_cfgs = {
     'resnet50d': _cfg(
         url='https://github.com/rwightman/pytorch-image-models/releases/download/v0.1-weights/resnet50d_ra2-464e36ba.pth',
         interpolation='bicubic', first_conv='conv1.0'),
-    'resnet66d': _cfg(url='', interpolation='bicubic', first_conv='conv1.0'),
-    'resnet101': _cfg(url='', interpolation='bicubic'),
-    'resnet101d': _cfg(url='', interpolation='bicubic', first_conv='conv1.0'),
-    'resnet152': _cfg(url='', interpolation='bicubic'),
 }
 
 

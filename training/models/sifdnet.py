@@ -1,11 +1,11 @@
 import torch
 import torch.nn.functional as F
+from timm.models.efficientnet_blocks import ConvBnAct
+from timm.models.layers import create_classifier
 from torch import nn as nn
 
 from training.models.aspp import ASPP
 from training.models.efficientnet import tf_efficientnet_b4_ns
-from training.models.efficientnet_blocks import ConvBnAct
-from training.models.layers import create_classifier
 from training.models.resnet import Bottleneck
 
 __all__ = ['sifdnet', 'BottomUpTopDownAttention', 'Decoder', 'Alam']

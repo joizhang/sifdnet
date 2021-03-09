@@ -1,6 +1,6 @@
 ## SIFDNet: SSIM Error Map-Based Face Forgery Detection and Localization
 
-![Network architecture](https://github.com/joizhang/sifdnet/blob/master/images/readme_fig.png)
+![Network architecture](https://github.com/joizhang/sifdnet/blob/main/images/readme_fig.png)
 
 ## Others
 

@@ -29,13 +29,13 @@ from typing import List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from timm.models.efficientnet_blocks import round_channels, resolve_bn_args, resolve_act_layer, BN_EPS_TF_DEFAULT
+from timm.models.efficientnet_builder import EfficientNetBuilder, decode_arch_def, efficientnet_init_weights
+from timm.models.features import FeatureInfo, FeatureHooks
+from timm.models.helpers import build_model_with_cfg
+from timm.models.layers import create_conv2d, create_classifier
 
 from .constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, INPUT_SIZE
-from .efficientnet_blocks import round_channels, resolve_bn_args, resolve_act_layer, BN_EPS_TF_DEFAULT
-from .efficientnet_builder import EfficientNetBuilder, decode_arch_def, efficientnet_init_weights
-from .features import FeatureInfo, FeatureHooks
-from .helpers import build_model_with_cfg
-from .layers import create_conv2d, create_classifier
 
 __all__ = ['EfficientNet', 'tf_efficientnet_b0_ns', 'tf_efficientnet_b1_ns', 'tf_efficientnet_b2_ns',
            'tf_efficientnet_b3_ns', 'tf_efficientnet_b4_ns', 'tf_efficientnet_b5_ns']

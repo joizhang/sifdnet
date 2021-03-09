@@ -66,7 +66,7 @@ def get_face_forensics_dataloader(model_cfg, args, fake_type="Deepfakes"):
     :return:
     """
     train_df = pd.read_csv(f'data/{FACE_FORENSICS}/data_{FACE_FORENSICS}_{fake_type}_train.csv')
-    # train_df = train_df.iloc[-1000:]
+    train_df = train_df.iloc[-1000:]
     train_transform = create_train_transform(model_cfg)
     train_data = FaceForensicsDataset(data_root=args.data_dir, df=train_df, mode='train', transform=train_transform,
                                       fake_type=fake_type, use_generalization=False)

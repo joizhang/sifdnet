@@ -3,7 +3,7 @@ import argparse
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Parameters of preprocessing and statistical program")
-    parser.add_argument("--root-dir", default="/home/xinlin/data2/Celeb-DF-v2", help="Root directory")
+    parser.add_argument("--root-dir", default="", help="Root directory")
     parser.add_argument("--detector-type", default="FacenetDetector", choices=["FacenetDetector"],
                         help="type of the detector")
     parser.add_argument("--crops-dir", default="crops", help="crops directory")

@@ -1,4 +1,3 @@
-import argparse
 import json
 import os
 from glob import glob
@@ -10,15 +9,7 @@ from tqdm import tqdm
 from preprocessing import face_detector
 from preprocessing.face_detector import VideoDataset
 from preprocessing.face_detector import VideoFaceDetector
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Process a original videos with face detector")
-    parser.add_argument("--root-dir", help="root directory", default="/home/xinlin/data2/Celeb-DF-v2")
-    parser.add_argument("--detector-type", default="FacenetDetector", choices=["FacenetDetector"],
-                        help="type of the detector")
-    args = parser.parse_args()
-    return args
+from preprocessing.option import parse_args
 
 
 def get_original_video_paths(root_dir):

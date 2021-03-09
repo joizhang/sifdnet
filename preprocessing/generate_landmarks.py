@@ -1,4 +1,3 @@
-import argparse
 import os
 from functools import partial
 from multiprocessing.pool import Pool
@@ -10,6 +9,7 @@ from facenet_pytorch.models.mtcnn import MTCNN
 from tqdm import tqdm
 
 from preprocessing.detect_original_faces import get_original_video_paths
+from preprocessing.option import parse_args
 
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
@@ -19,13 +19,6 @@ cv2.ocl.setUseOpenCL(False)
 cv2.setNumThreads(0)
 
 detector = MTCNN(margin=0, thresholds=[0.65, 0.75, 0.75], device="cuda:0")
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Extract image landmarks")
-    parser.add_argument("--root-dir", help="root directory", default="")
-    args = parser.parse_args()
-    return args
 
 
 def save_landmarks(ori_path, root_dir):
