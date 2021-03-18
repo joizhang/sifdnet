@@ -2,6 +2,10 @@
 
 ![Network architecture](https://github.com/joizhang/sifdnet/blob/main/images/readme_fig.png)
 
+## data split
+
+See the 'split' folder for detail.
+
 ## Others
 
 More available preprocessing code can be found at [https://gitee.com/joizhang](https://gitee.com/joizhang).
