@@ -4,7 +4,7 @@
 
 ## Data Split
 
-See the 'split' folder for detail.
+Look up the 'split' folder for detail.
 
 ## Preprocessing
 
