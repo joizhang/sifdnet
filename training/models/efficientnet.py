@@ -24,18 +24,20 @@ An implementation of EfficienNet that covers variety of related models with effi
 
 Hacked together by / Copyright 2020 Ross Wightman
 """
+from functools import partial
 from typing import List
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.efficientnet_blocks import round_channels, resolve_bn_args, resolve_act_layer, BN_EPS_TF_DEFAULT
-from timm.models.efficientnet_builder import EfficientNetBuilder, decode_arch_def, efficientnet_init_weights
-from timm.models.features import FeatureInfo, FeatureHooks
-from timm.models.helpers import build_model_with_cfg
+from timm.models.helpers import build_model_with_cfg, default_cfg_for_features
 from timm.models.layers import create_conv2d, create_classifier
 
 from .constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, INPUT_SIZE
+from .efficientnet_blocks import SqueezeExcite
+from .efficientnet_builder import EfficientNetBuilder, decode_arch_def, efficientnet_init_weights, \
+    round_channels, resolve_bn_args, resolve_act_layer, BN_EPS_TF_DEFAULT
+from .features import FeatureInfo, FeatureHooks
 
 __all__ = ['EfficientNet', 'tf_efficientnet_b0_ns', 'tf_efficientnet_b1_ns', 'tf_efficientnet_b2_ns',
            'tf_efficientnet_b3_ns', 'tf_efficientnet_b4_ns', 'tf_efficientnet_b5_ns']
@@ -91,6 +93,7 @@ class EfficientNet(nn.Module):
     """ (Generic) EfficientNet
 
     A flexible and performant PyTorch implementation of efficient network architectures, including:
+      * EfficientNet-V2 Small, Medium, Large, XL & B0-B3
       * EfficientNet B0-B8, L2
       * EfficientNet-EdgeTPU
       * EfficientNet-CondConv
@@ -101,34 +104,35 @@ class EfficientNet(nn.Module):
 
     """
 
-    def __init__(self, block_args, num_classes=1000, num_features=1280, in_chans=3, stem_size=32,
-                 channel_multiplier=1.0, channel_divisor=8, channel_min=None,
-                 output_stride=32, pad_type='', fix_stem=False, act_layer=nn.ReLU, drop_rate=0., drop_path_rate=0.,
-                 se_kwargs=None, norm_layer=nn.BatchNorm2d, norm_kwargs=None, global_pool='avg'):
+    def __init__(self, block_args, num_classes=1000, num_features=1280, in_chans=3, stem_size=32, fix_stem=False,
+                 output_stride=32, pad_type='', round_chs_fn=round_channels, act_layer=None, norm_layer=None,
+                 se_layer=None, drop_rate=0., drop_path_rate=0., global_pool='avg'):
         super(EfficientNet, self).__init__()
-        norm_kwargs = norm_kwargs or {}
-
+        act_layer = act_layer or nn.ReLU
+        norm_layer = norm_layer or nn.BatchNorm2d
+        se_layer = se_layer or SqueezeExcite
         self.num_classes = num_classes
         self.num_features = num_features
         self.drop_rate = drop_rate
 
         # Stem
         if not fix_stem:
-            stem_size = round_channels(stem_size, channel_multiplier, channel_divisor, channel_min)
+            stem_size = round_chs_fn(stem_size)
         self.conv_stem = create_conv2d(in_chans, stem_size, 3, stride=2, padding=pad_type)
-        self.bn1 = norm_layer(stem_size, **norm_kwargs)
+        self.bn1 = norm_layer(stem_size)
         self.act1 = act_layer(inplace=True)
 
         # Middle stages (IR/ER/DS Blocks)
-        builder = EfficientNetBuilder(channel_multiplier, channel_divisor, channel_min, output_stride, pad_type,
-                                      act_layer, se_kwargs, norm_layer, norm_kwargs, drop_path_rate, verbose=_DEBUG)
+        builder = EfficientNetBuilder(
+            output_stride=output_stride, pad_type=pad_type, round_chs_fn=round_chs_fn,
+            act_layer=act_layer, norm_layer=norm_layer, se_layer=se_layer, drop_path_rate=drop_path_rate)
         self.blocks = nn.Sequential(*builder(stem_size, block_args))
         self.feature_info = builder.features
         head_chs = builder.in_chs
 
         # Head + Pooling
         self.conv_head = create_conv2d(head_chs, self.num_features, 1, padding=pad_type)
-        self.bn2 = norm_layer(self.num_features, **norm_kwargs)
+        self.bn2 = norm_layer(self.num_features)
         self.act2 = act_layer(inplace=True)
         self.global_pool, self.classifier = create_classifier(
             self.num_features, self.num_classes, pool_type=global_pool)
@@ -175,25 +179,27 @@ class EfficientNetFeatures(nn.Module):
     and object detection models.
     """
 
-    def __init__(self, block_args, out_indices=(0, 1, 2, 3, 4), feature_location='bottleneck',
-                 in_chans=3, stem_size=32, channel_multiplier=1.0, channel_divisor=8, channel_min=None,
-                 output_stride=32, pad_type='', fix_stem=False, act_layer=nn.ReLU, drop_rate=0., drop_path_rate=0.,
-                 se_kwargs=None, norm_layer=nn.BatchNorm2d, norm_kwargs=None):
+    def __init__(self, block_args, out_indices=(0, 1, 2, 3, 4), feature_location='bottleneck', in_chans=3,
+                 stem_size=32, fix_stem=False, output_stride=32, pad_type='', round_chs_fn=round_channels,
+                 act_layer=None, norm_layer=None, se_layer=None, drop_rate=0., drop_path_rate=0.):
         super(EfficientNetFeatures, self).__init__()
-        norm_kwargs = norm_kwargs or {}
+        act_layer = act_layer or nn.ReLU
+        norm_layer = norm_layer or nn.BatchNorm2d
+        se_layer = se_layer or SqueezeExcite
         self.drop_rate = drop_rate
 
         # Stem
         if not fix_stem:
-            stem_size = round_channels(stem_size, channel_multiplier, channel_divisor, channel_min)
+            stem_size = round_chs_fn(stem_size)
         self.conv_stem = create_conv2d(in_chans, stem_size, 3, stride=2, padding=pad_type)
-        self.bn1 = norm_layer(stem_size, **norm_kwargs)
+        self.bn1 = norm_layer(stem_size)
         self.act1 = act_layer(inplace=True)
 
         # Middle stages (IR/ER/DS Blocks)
         builder = EfficientNetBuilder(
-            channel_multiplier, channel_divisor, channel_min, output_stride, pad_type, act_layer, se_kwargs,
-            norm_layer, norm_kwargs, drop_path_rate, feature_location=feature_location, verbose=_DEBUG)
+            output_stride=output_stride, pad_type=pad_type, round_chs_fn=round_chs_fn,
+            act_layer=act_layer, norm_layer=norm_layer, se_layer=se_layer, drop_path_rate=drop_path_rate,
+            feature_location=feature_location)
         self.blocks = nn.Sequential(*builder(stem_size, block_args))
         self.feature_info = FeatureInfo(builder.features, out_indices)
         self._stage_out_idx = {v['stage']: i for i, v in enumerate(self.feature_info) if i in out_indices}
@@ -225,19 +231,23 @@ class EfficientNetFeatures(nn.Module):
             return list(out.values())
 
 
-def _create_effnet(model_kwargs, variant, pretrained=False):
-    if model_kwargs.pop('features_only', False):
-        load_strict = False
-        model_kwargs.pop('num_classes', 0)
-        model_kwargs.pop('num_features', 0)
-        model_kwargs.pop('head_conv', None)
+def _create_effnet(variant, pretrained=False, **kwargs):
+    features_only = False
+    model_cls = EfficientNet
+    kwargs_filter = None
+    if kwargs.pop('features_only', False):
+        features_only = True
+        kwargs_filter = ('num_classes', 'num_features', 'head_conv', 'global_pool')
         model_cls = EfficientNetFeatures
-    else:
-        load_strict = True
-        model_cls = EfficientNet
-    return build_model_with_cfg(
-        model_cls, variant, pretrained, default_cfg=default_cfgs[variant],
-        pretrained_strict=load_strict, **model_kwargs)
+    model = build_model_with_cfg(
+        model_cls, variant, pretrained,
+        default_cfg=default_cfgs[variant],
+        pretrained_strict=not features_only,
+        kwargs_filter=kwargs_filter,
+        **kwargs)
+    if features_only:
+        model.default_cfg = default_cfg_for_features(model.default_cfg)
+    return model
 
 
 def _gen_efficientnet(variant, channel_multiplier=1.0, depth_multiplier=1.0, pretrained=False, **kwargs):
@@ -273,16 +283,17 @@ def _gen_efficientnet(variant, channel_multiplier=1.0, depth_multiplier=1.0, pre
         ['ir_r4_k5_s2_e6_c192_se0.25'],
         ['ir_r1_k3_s1_e6_c320_se0.25'],
     ]
+    round_chs_fn = partial(round_channels, multiplier=channel_multiplier)
     model_kwargs = dict(
         block_args=decode_arch_def(arch_def, depth_multiplier),
-        num_features=round_channels(1280, channel_multiplier, 8, None),
+        num_features=round_chs_fn(1280),
         stem_size=32,
-        channel_multiplier=channel_multiplier,
+        round_chs_fn=round_chs_fn,
         act_layer=resolve_act_layer(kwargs, 'swish'),
-        norm_kwargs=resolve_bn_args(kwargs),
+        norm_layer=kwargs.pop('norm_layer', None) or partial(nn.BatchNorm2d, **resolve_bn_args(kwargs)),
         **kwargs,
     )
-    model = _create_effnet(model_kwargs, variant, pretrained)
+    model = _create_effnet(variant, pretrained, **model_kwargs)
     return model
 
 

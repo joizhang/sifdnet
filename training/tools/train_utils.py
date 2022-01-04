@@ -3,8 +3,9 @@ import time
 
 import torch
 from torch.cuda.amp import autocast
+from torch.optim import lr_scheduler
 
-from preprocessing.constants import CELEB_DF, FACE_FORENSICS_DF, FACE_FORENSICS_FSH, DEEPER_FORENSICS, DFDC
+from constants import *
 from training import models
 from training.tools.metrics import AverageMeter, ProgressMeter, accuracy, eval_metrics
 
@@ -20,13 +21,16 @@ def parse_args():
                         help='model architecture: ' + ' | '.join(model_names) + ' (default: xception)')
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
-    parser.add_argument('--prefix', type=str, default=CELEB_DF,
-                        choices=[CELEB_DF, FACE_FORENSICS_DF, FACE_FORENSICS_FSH, DEEPER_FORENSICS, DFDC],
-                        help='(default: celeb-df)')
+    parser.add_argument('--prefix', type=str, default=FACE_FORENSICS,
+                        choices=[FACE_FORENSICS, FACE_FORENSICS_DF, FACE_FORENSICS_F2F,
+                                 FACE_FORENSICS_FSW, FACE_FORENSICS_NT, FACE_FORENSICS_FSH,
+                                 CELEB_DF, DEEPER_FORENSICS, DFDC],
+                        help='dataset')
+    parser.add_argument('--compression-version', type=str, default='c23', choices=['c23', 'c40'])
     parser.add_argument('--epochs', type=int, default=10, metavar='N',
                         help='number of epochs to train (default: 10)')
     parser.add_argument('--batch-size', type=int, default=100, metavar='N', help='batch size')
-    parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
+    parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
                         metavar='LR', help='initial learning rate', dest='lr')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
@@ -64,15 +68,52 @@ def parse_args():
     return args
 
 
-def train(train_loader, model, scaler, optimizer, loss_functions, epoch, args):
+def create_optimizer(model, args):
+    scheduler = None
+    if args.distributed and str(args.arch).startswith('sifdnet'):
+        # optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum,
+        #                             weight_decay=args.weight_decay)
+        optimizer = torch.optim.Adam(model.parameters(), args.lr)
+        # optimizer = torch.optim.Adam([
+        #     {'params': model.module.encoder.parameters()},
+        #     {'params': model.module.classifier.parameters()},
+        #     {'params': model.module.aspp.parameters()},
+        #     {'params': model.module.alam1.parameters(), 'lr': 1e-3},
+        #     {'params': model.module.alam2.parameters(), 'lr': 1e-3},
+        #     {'params': model.module.decoder.parameters(), 'lr': 1e-2},
+        # ], args.lr)
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    else:
+        # optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum,
+        #                             weight_decay=args.weight_decay)
+        # scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+        optimizer = torch.optim.Adam(model.parameters(), args.lr)
+        # optimizer = torch.optim.Adam([
+        #     {'params': model.encoder.parameters()},
+        #     {'params': model.classifier.parameters()},
+        #     {'params': model.alam1.parameters(), 'lr': 1e-3},
+        #     {'params': model.alam2.parameters(), 'lr': 1e-3},
+        #     {'params': model.aspp.parameters(), 'lr': 1e-3},
+        #     {'params': model.decoder.parameters(), 'lr': 1e-3},
+        # ], args.lr)
+
+    return optimizer, scheduler
+
+
+def error_threshold(masks, tau=0.25):
+    masks[masks >= tau] = 1.
+    masks[masks < tau] = 0.
+    return masks.long()
+
+
+def train(train_loader, model, scaler, optimizer, loss_functions, epoch, logger, args):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
-    pw_acc = AverageMeter('Pixel-wise Acc', ':6.2f')
-    progress = ProgressMeter(len(train_loader), [batch_time, losses, top1, pw_acc], prefix="Epoch: [{}]".format(epoch))
+    # pw_acc = AverageMeter('Pixel-wise Acc', ':6.2f')
+    progress = ProgressMeter(len(train_loader), [batch_time, losses, top1], logger, prefix="Epoch: [{}]".format(epoch))
 
     model.train()
-
     end = time.time()
     for batch_idx, sample in enumerate(train_loader):
         if args.gpu is not None:
@@ -87,19 +128,28 @@ def train(train_loader, model, scaler, optimizer, loss_functions, epoch, args):
             lambda1, lambda2 = 1., 1.
             outputs = model(images)
             if isinstance(outputs, tuple):
-                labels_pred, masks_pred = outputs
-                loss_classifier = loss_functions['classifier_loss'](labels_pred, labels)
-                if masks_pred.size(1) == 1:
-                    loss_mask = loss_functions['map_loss'](masks_pred, masks)
-                    loss = lambda1 * loss_classifier + lambda2 * loss_mask
-                else:
-                    binary_masks = masks.clone()
-                    binary_masks[binary_masks >= 0.25] = 1.
-                    binary_masks[binary_masks < 0.25] = 0.
-                    binary_masks = binary_masks.squeeze().long()
-                    loss_binary_mask = loss_functions['binary_map_loss'](masks_pred, binary_masks)
-                    # loss_mask = loss_functions['map_loss'](masks_pred[:, -1], masks.squeeze())
-                    loss = lambda1 * loss_classifier + lambda2 * loss_binary_mask
+                if len(outputs) > 2:
+                    labels_pred, masks_pred, masks_alam = outputs
+                    # classification Loss
+                    loss_classifier = loss_functions['classifier_loss'](labels_pred, labels)
+                    # ALAM Loss
+                    loss_alam = torch.sum(torch.tensor(
+                        [loss_functions['map_loss'](masks_, masks) for masks_ in masks_alam]
+                    ))
+                    # Binary Map Loss
+                    masks_binary = error_threshold(torch.clone(masks)).squeeze()
+                    loss_decoder_mask = loss_functions['binary_map_loss'](masks_pred, masks_binary)
+                    # Overall Loss
+                    loss = lambda1 * loss_classifier + lambda2 * (loss_alam + loss_decoder_mask)
+                elif len(outputs) == 2:
+                    labels_pred, masks_pred = outputs
+                    loss_classifier = loss_functions['classifier_loss'](labels_pred, labels)
+                    if masks_pred.shape[1] == 1:
+                        loss_masks = loss_functions['map_loss'](masks_pred, masks)
+                    else:
+                        masks_binary = error_threshold(torch.clone(masks)).squeeze()
+                        loss_masks = loss_functions['binary_map_loss'](masks_pred, masks_binary)
+                    loss = lambda1 * loss_classifier + lambda2 * loss_masks
             else:
                 labels_pred = outputs
                 loss = loss_functions['classifier_loss'](labels_pred, labels)
@@ -108,13 +158,6 @@ def train(train_loader, model, scaler, optimizer, loss_functions, epoch, args):
         acc1, = accuracy(labels_pred, labels)
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
-        # if isinstance(outputs, tuple):
-        #     if masks_pred.size(1) == 1:
-        #         overall_acc = eval_metrics(masks.cpu(), masks_pred.cpu(), 256)
-        #     else:
-        #         mask_pred1 = torch.argmax(masks_pred, dim=1)
-        #         overall_acc = eval_metrics(masks.cpu(), mask_pred1.cpu(), 256)
-        #     pw_acc.update(overall_acc, images.size(0))
 
         # compute gradient and do Adam step
         scaler.scale(loss).backward()
@@ -132,11 +175,11 @@ def train(train_loader, model, scaler, optimizer, loss_functions, epoch, args):
             break
 
 
-def validate(val_loader, model, args):
+def validate(val_loader, model, logger, args):
     batch_time = AverageMeter('Time', ':6.3f')
     top1 = AverageMeter('Acc@1', ':6.2f')
-    pw_acc = AverageMeter('Pixel-wise Acc', ':6.2f')
-    progress = ProgressMeter(len(val_loader), [batch_time, top1, pw_acc], prefix='Validation: ')
+    miou = AverageMeter('Mean IoU', ':6.2f')
+    progress = ProgressMeter(len(val_loader), [batch_time, top1, miou], logger, prefix='Validation: ')
 
     model.eval()
 
@@ -149,12 +192,16 @@ def validate(val_loader, model, args):
                 masks = sample['masks']
             else:
                 images, labels, masks = sample['images'], sample['labels'], sample['masks']
+            masks = error_threshold(masks)
 
             # compute output
             with autocast(enabled=args.use_amp):
                 outputs = model(images)
                 if isinstance(outputs, tuple):
-                    labels_pred, masks_pred = outputs
+                    if len(outputs) > 2:
+                        labels_pred, masks_pred, masks_alam = outputs
+                    elif isinstance(outputs, tuple) and len(outputs) == 2:
+                        labels_pred, masks_pred = outputs
                 else:
                     labels_pred = outputs
 
@@ -162,12 +209,12 @@ def validate(val_loader, model, args):
             acc1, = accuracy(labels_pred, labels)
             top1.update(acc1[0].cpu(), images.size(0))
             if isinstance(outputs, tuple):
-                if masks_pred.size(1) == 1:
-                    overall_acc = eval_metrics(masks.cpu(), masks_pred.cpu(), 256)
+                if masks_pred.shape[1] == 1:
+                    masks_pred = error_threshold(masks_pred)
                 else:
-                    mask_pred1 = torch.argmax(masks_pred, dim=1)
-                    overall_acc = eval_metrics(masks.cpu(), mask_pred1.cpu(), 256)
-                pw_acc.update(overall_acc, images.size(0))
+                    masks_pred = torch.argmax(masks_pred, dim=1)
+                overall_acc, avg_jacc = eval_metrics(masks.cpu(), masks_pred.cpu(), 2)
+                miou.update(avg_jacc, images.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -178,4 +225,4 @@ def validate(val_loader, model, args):
             if (batch_idx + 1) % 1000 == 0:
                 break
 
-    return top1.avg, pw_acc.avg
+    return top1.avg, miou.avg

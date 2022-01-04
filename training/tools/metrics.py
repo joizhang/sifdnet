@@ -35,15 +35,17 @@ class AverageMeter(object):
 
 
 class ProgressMeter(object):
-    def __init__(self, num_batches, meters, prefix=""):
+
+    def __init__(self, num_batches, meters, logger, prefix=""):
         self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
         self.meters = meters
+        self.logger = logger
         self.prefix = prefix
 
     def display(self, batch):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
-        print('\t'.join(entries))
+        self.logger.info('\t'.join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))
@@ -173,10 +175,10 @@ def eval_metrics(gt, pred, num_classes):
         hist += _fast_hist(t.flatten(), p.flatten(), num_classes)
     overall_acc = overall_pixel_accuracy(hist)
     # avg_per_class_acc = per_class_pixel_accuracy(hist)
-    # avg_jacc = jaccard_index(hist)
+    avg_jacc = jaccard_index(hist)
     # avg_dice = dice_coefficient(hist)
     # return overall_acc, avg_per_class_acc, avg_jacc, avg_dice
-    return overall_acc
+    return overall_acc, avg_jacc
 
 
 def f1_score(gt, pred):
@@ -232,8 +234,8 @@ def calc_tpr(fpr, tpr):
     return tpr_0_01, tpr_0_02, tpr_0_05, tpr_0_10, tpr_0_20, tpr_0_50, tpr_1_00, tpr_2_00, tpr_5_00
 
 
-def show_metrics(y_true, y_pred, y_score, pw_acc, mae):
-    print(metrics.confusion_matrix(y_true, y_pred))
+def show_metrics(y_true, y_pred, y_score, miou, mae, logger):
+    logger.info(metrics.confusion_matrix(y_true, y_pred))
     # print(metrics.classification_report(y_true, y_pred))
     # Accuracy
     acc = metrics.accuracy_score(y_true, y_pred)
@@ -250,5 +252,5 @@ def show_metrics(y_true, y_pred, y_score, pw_acc, mae):
     roc_auc = metrics.auc(fpr, tpr)
     # metrics_template = "ACC: {:f} AUC: {:f} EER: {:f} TPR@0.01: {:f} TPR@0.10: {:f} TPR@1.00: {:f}"
     # print(metrics_template.format(acc, roc_auc, eer, tpr_result[0], tpr_result[3], tpr_result[6]))
-    metrics_template = "ACC: {:f} AP: {:f} AUC: {:f} EER: {:f} PWA: {:f} MAE: {:f}"
-    print(metrics_template.format(acc, ap, roc_auc, eer, pw_acc, mae))
+    metrics_template = "ACC: {:f} AP: {:f} AUC: {:f} EER: {:f} mIoU: {:f} MAE: {:f}"
+    logger.info(metrics_template.format(acc, ap, roc_auc, eer, miou, mae))

@@ -1,14 +1,13 @@
 import torch
 import torch.nn.functional as F
-from timm.models.efficientnet_blocks import ConvBnAct
 from timm.models.layers import create_classifier
 from torch import nn as nn
 
-from training.models.aspp import ASPP
+from training.models.aspp import DCM
 from training.models.efficientnet import tf_efficientnet_b4_ns
+from training.models.efficientnet_blocks import ConvBnAct
+from training.models.gbb import GradientBoostNet
 from training.models.resnet import Bottleneck
-
-__all__ = ['sifdnet', 'BottomUpTopDownAttention', 'Decoder', 'Alam']
 
 
 def _upsample_like(src, tgt):
@@ -52,37 +51,59 @@ class BottomUpTopDownAttention(nn.Module):
         return x
 
 
+class ALAM(nn.Module):
+    """
+    Adjacent Level Aggregation Module (ALAM)
+    """
+
+    def __init__(self, in_channels, out_channels, size):
+        super(ALAM, self).__init__()
+        self.block1 = ConvBnAct(in_channels, out_channels, kernel_size=3, dilation=2, pad_type='same')
+        self.block2 = ConvBnAct(out_channels * 2, out_channels, kernel_size=3, pad_type='same')
+        self.attn = BottomUpTopDownAttention(out_channels, size=size)
+
+    def forward(self, x1, x2):
+        x2 = self.block1(x2)
+        x2 = _upsample_like(x2, x1)
+        x1 = torch.cat((x1, x2), dim=1)
+        x1 = self.block2(x1)
+        x1 = self.attn(x1)
+        return x1
+
+
 class Decoder(nn.Module):
 
-    def __init__(self, hi_channels=320, mid_channels=112, lo_channels=48, out_channels=1):
+    def __init__(self, encoder_num_chs, out_channels):
+        """
+        hi_channels=320, mid_channels=112, lo_channels=48
+        for example outputs of efficientnet-b4 are [24, 32, 56, 160, 448]
+        :param encoder_num_chs:
+        :param out_channels:
+        """
         super(Decoder, self).__init__()
-
+        # aspp projector
+        self.dcm_proj = ConvBnAct(encoder_num_chs[4], encoder_num_chs[3], kernel_size=1, pad_type='same')
         # high level feature
-        self.block1 = ConvBnAct(hi_channels, mid_channels // 2, kernel_size=1, pad_type='same')
+        self.block1 = ConvBnAct(encoder_num_chs[3] * 2, encoder_num_chs[2], kernel_size=1, pad_type='same')
         # middle level feature
-        self.block2 = ConvBnAct(mid_channels, lo_channels // 2, kernel_size=1, pad_type='same')
+        self.block2 = ConvBnAct(encoder_num_chs[2] * 2, encoder_num_chs[0], kernel_size=1, pad_type='same')
         # low level feature
-        self.block3 = ConvBnAct(lo_channels, 24, kernel_size=1, pad_type='same')
+        self.block3 = ConvBnAct(encoder_num_chs[0] * 2, encoder_num_chs[0], kernel_size=1, pad_type='same')
         # output
         self.block4 = nn.Sequential(
-            ConvBnAct(24, 24, kernel_size=3, pad_type='same'),
+            ConvBnAct(encoder_num_chs[0], encoder_num_chs[0], kernel_size=3, pad_type='same'),
             nn.Dropout(0.2),
-            ConvBnAct(24, out_channels, kernel_size=1, pad_type='same'),
+            ConvBnAct(encoder_num_chs[0], out_channels, kernel_size=1, pad_type='same'),
         )
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
         self._initialize_weights()
 
-    def forward(self, aspp_feat, high_level_feat, middle_level_feat, low_level_feat):
-        """
-        :param aspp_feat: (160, 8, 8)
-        :param high_level_feat: (160, 16, 16)
-        :param middle_level_feat: (56, 32, 32)
-        :param low_level_feat: (24, 128, 128)
-        :return:
-        """
-        aspp_feat = _upsample_like(aspp_feat, high_level_feat)  # (160, 16, 16)
-        high_level_feat = torch.cat((high_level_feat, aspp_feat), dim=1)  # (320, 16, 16)
+    def forward(self, dcm_feat, high_level_feat, middle_level_feat, low_level_feat):
+        dcm_feat = self.dcm_proj(dcm_feat)
+
+        dcm_feat = _upsample_like(dcm_feat, high_level_feat)  # (160, 16, 16)
+        high_level_feat = torch.cat((high_level_feat, dcm_feat), dim=1)  # (320, 16, 16)
 
         high_level_feat = self.block1(high_level_feat)  # (56, 16, 16)
         high_level_feat = _upsample_like(high_level_feat, middle_level_feat)  # (56, 32, 32)
@@ -112,29 +133,9 @@ class Decoder(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
 
-class Alam(nn.Module):
-    """
-    Adjacent Level Aggregation Module (ALAM)
-    """
-
-    def __init__(self, in_channels, out_channels, size):
-        super(Alam, self).__init__()
-        self.block1 = ConvBnAct(in_channels, out_channels, kernel_size=3, dilation=2, pad_type='same')
-        self.block2 = ConvBnAct(out_channels * 2, out_channels, kernel_size=3, pad_type='same')
-        self.attn = BottomUpTopDownAttention(out_channels, size=size)
-
-    def forward(self, x1, x2):
-        x2 = self.block1(x2)
-        x2 = _upsample_like(x2, x1)
-        x1 = torch.cat((x1, x2), dim=1)
-        x1 = self.block2(x1)
-        x1 = self.attn(x1)
-        return x1
-
-
 class SIFDNet(nn.Module):
 
-    def __init__(self, num_classes=2, map_classes=1, drop_rate=0., pretrained=False):
+    def __init__(self, num_classes, map_classes, drop_rate, pretrained):
         super(SIFDNet, self).__init__()
 
         self.num_classes = num_classes
@@ -144,27 +145,35 @@ class SIFDNet(nn.Module):
         self.encoder = tf_efficientnet_b4_ns(pretrained=pretrained, features_only=True)
         self.num_chs = [info['num_chs'] for info in self.encoder.feature_info]  # [24, 32, 56, 160, 448]
         assert len(self.num_chs) == 5
-        self.alam1 = Alam(in_channels=self.num_chs[4], out_channels=self.num_chs[3], size=(16, 16))
-        self.alam2 = Alam(in_channels=self.num_chs[1], out_channels=self.num_chs[0], size=(128, 128))
+        self.alam1 = ALAM(in_channels=self.num_chs[4], out_channels=self.num_chs[3], size=(16, 16))
+        self.alam2 = ALAM(in_channels=self.num_chs[2], out_channels=self.num_chs[2], size=(32, 32))
+        self.alam3 = ALAM(in_channels=self.num_chs[1], out_channels=self.num_chs[0], size=(128, 128))
+        self.sobel_stream = GradientBoostNet(self.num_chs, filter_type='sobel')
+        self.dcm = DCM(in_channels=self.num_chs[4], atrous_rates=[1, 3, 6, 9], out_channels=self.num_chs[4])
+        self.decoder = Decoder(encoder_num_chs=self.num_chs, out_channels=map_classes)
         self.global_pool, self.classifier = create_classifier(self.num_chs[4], self.num_classes, pool_type='avg')
-        self.aspp = ASPP(in_channels=self.num_chs[4], atrous_rates=[12, 24, 36], out_channels=self.num_chs[3])
-        self.decoder = Decoder(out_channels=map_classes)
 
     def forward(self, inputs):
         features = self.encoder(inputs)
-        aspp_feat = self.aspp(features[-1])
-        features[-2] = self.alam1(features[-2], features[-1])
-        features[0] = self.alam2(features[0], features[1])
-        # low_level_feat, middle_level_feat, high_level_feat, aspp_feat
-        mask = self.decoder(aspp_feat, features[-2], features[2], features[0])
-        x = self.global_pool(features[-1])
+        features[3] = self.alam1(features[3], features[4])
+        features[2] = self.alam2(features[2], features[2])
+        features[0] = self.alam3(features[0], features[1])
+        x_sobel = self.sobel_stream(features[0], features[2], features[3])
+        x_sobel += features[4]
+        dcm_feat = self.dcm(x_sobel)
+        # classification
+        x = self.global_pool(dcm_feat)
         if self.drop_rate > 0.:
             x = F.dropout(x, p=self.drop_rate, training=self.training)
         x = self.classifier(x)
-        return x, mask
+        # mask
+        masks_pred = self.decoder(dcm_feat, features[3], features[2], features[0])
+
+        return x, masks_pred
 
 
-def sifdnet(num_classes=2, map_classes=1, pretrained=False):
-    model = SIFDNet(num_classes=num_classes, map_classes=map_classes, pretrained=pretrained)
+def sifdnet(num_classes=2, map_classes=1, drop_rate=0., pretrained=False):
+    """ GBB + ALAM + DCM """
+    model = SIFDNet(num_classes=num_classes, map_classes=map_classes, drop_rate=drop_rate, pretrained=pretrained)
     model.default_cfg = model.encoder.default_cfg
     return model
