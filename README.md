@@ -1,14 +1,17 @@
-## SIFDNet: SSIM Error Map-Based Face Forgery Detection and Localization
+## SIFDNet: Face Forgery Detection and Localization Based on SSIM Error Maps
 
 ![Network architecture](https://github.com/joizhang/sifdnet/blob/main/images/readme_fig.png)
 
-## data split
+## Data Split
 
 See the 'split' folder for detail.
 
-## Others
+## Preprocessing
 
-More available preprocessing code can be found at [https://gitee.com/joizhang](https://gitee.com/joizhang).
+More available preprocessing code can be found at:
+[FaceForensics++](https://gitee.com/joizhang/face-forensics-detection)
+[Celeb-DF](https://gitee.com/joizhang/celeb-df-detection)
+[Deepfake Detection Challenge](https://gitee.com/joizhang/dfdc-detection)
 
 ## Reference
 
