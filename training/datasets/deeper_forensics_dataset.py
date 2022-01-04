@@ -9,7 +9,7 @@ from pandas import DataFrame
 from torch.utils.data import Dataset, DataLoader
 
 from config import Config
-from preprocessing.constants import DEEPER_FORENSICS
+from constants import DEEPER_FORENSICS
 from training.datasets.transform import create_train_transform, create_val_test_transform
 
 CONFIG = Config()

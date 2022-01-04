@@ -8,7 +8,7 @@ import torch
 from pandas import DataFrame
 from torch.utils.data import Dataset, DataLoader
 
-from preprocessing.constants import DFDC
+from constants import DFDC
 from training.datasets.transform import create_train_transform, create_val_test_transform
 
 
@@ -52,11 +52,11 @@ def get_dfdc_dataloader(model_cfg, args):
     :param args:
     :return:
     """
-    # train_df = pd.read_csv(f'data/{DFDC}/data_{DFDC}_train.csv')
-    train_real_df = pd.read_csv(f'data/{DFDC}/data_{DFDC}_train_real.csv')
-    train_fake_df = pd.read_csv(f'data/{DFDC}/data_{DFDC}_train_fake.csv')
-    train_fake_df = train_fake_df.sample(len(train_real_df.index))
-    train_df = pd.concat([train_real_df, train_fake_df])
+    train_df = pd.read_csv(f'data/{DFDC}/data_{DFDC}_train.csv')
+    # train_real_df = pd.read_csv(f'data/{DFDC}/data_{DFDC}_train_real.csv')
+    # train_fake_df = pd.read_csv(f'data/{DFDC}/data_{DFDC}_train_fake.csv')
+    # train_fake_df = train_fake_df.sample(len(train_real_df.index))
+    # train_df = pd.concat([train_real_df, train_fake_df])
 
     train_transform = create_train_transform(model_cfg)
     train_data = DFDCDataset(data_root=args.data_dir, df=train_df, mode='train', transform=train_transform)
