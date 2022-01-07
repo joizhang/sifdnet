@@ -1,6 +1,6 @@
 ## SIFDNet: Face Forgery Detection and Localization Based on SSIM Error Maps
 
-![Network architecture](images/architecture.png)
+![Network architecture](images/architecture.svg)
 
 ## Data Split
 
